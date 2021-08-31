@@ -1,0 +1,77 @@
+{
+  "name": "@csvbox/vuejs",
+  "version": "0.0.1",
+  "description": "Vue adapter for csvbox.io",
+  "author": "csvbox-io",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/csvbox-io/vue-adapter.git"
+  },
+  "private": false,
+  "scripts": {
+    "serve": "vue-cli-service serve",
+    "lint": "vue-cli-service lint",
+    "build": "vue-cli-service build --target lib --name csvbox-vuejs ./src/index.js"
+  },
+  "dependencies": {
+    "core-js": "^3.6.5",
+    "vue": "^2.6.11"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~4.5.0",
+    "@vue/cli-plugin-eslint": "~4.5.0",
+    "@vue/cli-service": "~4.5.0",
+    "babel-eslint": "^10.1.0",
+    "eslint": "^6.7.2",
+    "eslint-plugin-vue": "^6.2.2",
+    "vue-template-compiler": "^2.6.11"
+  },
+  "eslintConfig": {
+    "root": true,
+    "env": {
+      "node": true
+    },
+    "extends": [
+      "plugin:vue/essential",
+      "eslint:recommended"
+    ],
+    "parserOptions": {
+      "parser": "babel-eslint"
+    },
+    "rules": {}
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ],
+  "main": "./dist/csvbox-vuejs.common.js",
+  "files": [
+    "dist/*",
+    "src/*",
+    "public/*",
+    "*.json",
+    "*.js"
+  ],
+  "keywords": [
+    "csv",
+    "importer",
+    "uploader",
+    "csvbox",
+    "parser",
+    "csv-parse",
+    "excel",
+    "xls",
+    "csv import",
+    "csv upload",
+    "spreadsheet import",
+    "vue csv",
+    "csv parse",
+    "csv to json"
+  ],
+  "bugs": {
+    "url": "https://github.com/csvbox-io/vue-adapter/issues"
+  },
+  "homepage": "https://github.com/csvbox-io/vue-adapter#readme"
+}
