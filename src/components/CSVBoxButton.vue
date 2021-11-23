@@ -22,10 +22,16 @@
 
                 }
             },
-            user:{
+            user: {
                 type: Object,
                 default: function (){
                     return { user_id: 'default123' };
+                }
+            },
+            dynamic_columns:{
+                type: Object,
+                default: function (){
+                    return null;
                 }
             }
 
@@ -75,6 +81,11 @@
                 if(this.user) {
                     iframe.contentWindow.postMessage({
                     "customer" : this.user
+                    }, "*");
+                }
+                if(this.dynamic_columns) {
+                    iframe.contentWindow.postMessage({
+                    "columns" : this.dynamic_columns
                     }, "*");
                 }
             }
