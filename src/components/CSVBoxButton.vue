@@ -28,8 +28,8 @@
                     return { user_id: 'default123' };
                 }
             },
-            dynamic_columns:{
-                type: Object,
+            dynamicColumns:{
+                type: Array,
                 default: function (){
                     return null;
                 }
@@ -83,9 +83,9 @@
                     "customer" : this.user
                     }, "*");
                 }
-                if(this.dynamic_columns) {
+                if(this.dynamicColumns) {
                     iframe.contentWindow.postMessage({
-                    "columns" : this.dynamic_columns
+                    "columns" : this.dynamicColumns
                     }, "*");
                 }
             }
