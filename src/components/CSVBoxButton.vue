@@ -1,6 +1,6 @@
 <template>
     <div>
-        <button @click="openModal">
+        <button data-csvbox @click="openModal">
             <slot></slot>
         </button>
         <div ref="holder" class="holder-style">
