@@ -77,15 +77,19 @@
             }, false);
 
             let iframe = this.$refs.iframe;
+
+            let self = this;
+
             iframe.onload = function () {
-                if(this.user) {
+                if(self.user) {
                     iframe.contentWindow.postMessage({
-                    "customer" : this.user
+                    "customer" : self.user
                     }, "*");
                 }
-                if(this.dynamicColumns) {
+                if(self.dynamicColumns) {
+                    console.log("posting dynamic columns")
                     iframe.contentWindow.postMessage({
-                    "columns" : this.dynamicColumns
+                    "columns" : self.dynamicColumns
                     }, "*");
                 }
             }
