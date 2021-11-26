@@ -1,6 +1,6 @@
 <template>
     <div>
-        <button data-csvbox @click="openModal">
+        <button disabled data-csvbox @click="openModal">
             <slot></slot>
         </button>
         <div ref="holder" class="holder-style">
@@ -53,6 +53,16 @@
         },
         mounted() {
             
+            if(document.querySelector("[data-csvbox]") != null){
+                document.onreadystatechange = () => {
+                    if (document.readyState === 'complete') {
+                        document.querySelector("[data-csvbox]").disabled = false;
+                    }else{
+                        document.querySelector("[data-csvbox]").disabled = true;
+                    }
+                };
+            }
+
             window.addEventListener("message", (event) => {
                 if (event.data === "mainModalHidden") {
                     this.$refs.holder.style.display = 'none';
