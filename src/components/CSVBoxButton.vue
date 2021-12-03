@@ -49,21 +49,8 @@
                     this.$refs.iframe.contentWindow.postMessage('openModal', '*');
                     this.isModalShown = true;
                 }
-            }
-        },
-        mounted() {
-            
-            if(document.querySelector("[data-csvbox]") != null){
-                document.onreadystatechange = () => {
-                    if (document.readyState === 'complete') {
-                        document.querySelector("[data-csvbox]").disabled = false;
-                    }else{
-                        document.querySelector("[data-csvbox]").disabled = true;
-                    }
-                };
-            }
-
-            window.addEventListener("message", (event) => {
+            },
+            onMessageEvent(event) {
                 if (event.data === "mainModalHidden") {
                     this.$refs.holder.style.display = 'none';
                     this.isModalShown = false;
@@ -84,7 +71,21 @@
 
                     }
                 }
-            }, false);
+            }
+        },
+        mounted() {
+            
+            if(document.querySelector("[data-csvbox]") != null){
+                document.onreadystatechange = () => {
+                    if (document.readyState === 'complete') {
+                        document.querySelector("[data-csvbox]").disabled = false;
+                    }else{
+                        document.querySelector("[data-csvbox]").disabled = true;
+                    }
+                };
+            }
+
+            window.addEventListener("message", this.onMessageEvent, false);
 
             let iframe = this.$refs.iframe;
 
@@ -97,14 +98,16 @@
                     }, "*");
                 }
                 if(self.dynamicColumns) {
-                    console.log("posting dynamic columns")
                     iframe.contentWindow.postMessage({
                     "columns" : self.dynamicColumns
                     }, "*");
                 }
             }
 
-        }
+        },
+        beforeDestroy(){
+            window.removeEventListener("message", this.onMessageEvent);
+        },
     }
 </script>
 <style scoped>
