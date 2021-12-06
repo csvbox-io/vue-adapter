@@ -1,6 +1,6 @@
 <template>
     <div>
-        <button disabled data-csvbox @click="openModal">
+        <button :disabled="disableImportButton" @click="openModal">
             <slot></slot>
         </button>
         <div ref="holder" class="holder-style">
@@ -16,7 +16,7 @@
                 type: String,
                 required: true
             },
-            onImport:{
+            onImport: {
                 type: Function,
                 default: function() {
 
@@ -24,13 +24,13 @@
             },
             user: {
                 type: Object,
-                default: function (){
+                default: function () {
                     return { user_id: 'default123' };
                 }
             },
             dynamicColumns:{
                 type: Array,
-                default: function (){
+                default: function () {
                     return null;
                 }
             }
@@ -39,7 +39,9 @@
         data(){
             return{
                 iframeSrc: "https://app.csvbox.io/embed/" + this.licenseKey,
-                isModalShown: false
+                isModalShown: false,
+                uniqueToken: null,
+                disableImportButton: true,
             }
         },
         methods: {
@@ -62,28 +64,30 @@
                     this.onImport(false);
                 }
                 if(typeof event.data == "object") {
-                    if(event.data.type && event.data.type == "data-push-status") {
-                        if(event.data.data.import_status == "success"){
-                            this.onImport(true, event.data.data);
-                        }else {
-                            this.onImport(false, event.data.data);
+                    if(event?.data?.data?.unique_token == this.uniqueToken) {
+                        if(event.data.type && event.data.type == "data-push-status") {
+                            if(event.data.data.import_status == "success") {
+                                this.onImport(true, event.data.data);
+                            } else {
+                                this.onImport(false, event.data.data);
+                            }
                         }
-
                     }
                 }
+            },
+            randomString() {
+                let result = '';
+                let characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+                let charactersLength = characters.length;
+                for (let i = 0; i < 20; i++) {
+                    result += characters.charAt(Math.floor(Math.random() * charactersLength)); 
+                }
+                return result;
             }
         },
         mounted() {
             
-            if(document.querySelector("[data-csvbox]") != null){
-                document.onreadystatechange = () => {
-                    if (document.readyState === 'complete') {
-                        document.querySelector("[data-csvbox]").disabled = false;
-                    }else{
-                        document.querySelector("[data-csvbox]").disabled = true;
-                    }
-                };
-            }
+            this.uniqueToken = this._uid + "_" + this.randomString();
 
             window.addEventListener("message", this.onMessageEvent, false);
 
@@ -92,22 +96,30 @@
             let self = this;
 
             iframe.onload = function () {
+
+                if(self.uniqueToken) {
+                    iframe.contentWindow.postMessage({
+                        "unique_token" : self.uniqueToken
+                    }, "*");
+                }
                 if(self.user) {
                     iframe.contentWindow.postMessage({
-                    "customer" : self.user
+                        "customer" : self.user
                     }, "*");
                 }
                 if(self.dynamicColumns) {
                     iframe.contentWindow.postMessage({
-                    "columns" : self.dynamicColumns
+                        "columns" : self.dynamicColumns
                     }, "*");
                 }
-            }
 
+                self.disableImportButton = false;
+
+            }
         },
-        beforeDestroy(){
+        beforeDestroy() {
             window.removeEventListener("message", this.onMessageEvent);
-        },
+        }
     }
 </script>
 <style scoped>
