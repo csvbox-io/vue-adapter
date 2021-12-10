@@ -86,7 +86,7 @@
             }
         },
         mounted() {
-            
+
             this.uniqueToken = this._uid + "_" + this.randomString();
 
             window.addEventListener("message", this.onMessageEvent, false);
@@ -114,6 +114,8 @@
                 }
 
                 self.disableImportButton = false;
+
+                self.$emit('onload');
 
             }
         },
