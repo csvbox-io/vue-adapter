@@ -33,8 +33,13 @@
                 default: function () {
                     return null;
                 }
+            },
+            options: {
+                type: Object,
+                default: function () {
+                    return { user_id: 'default123' };
+                }
             }
-
         },
         data(){
             return{
@@ -110,6 +115,12 @@
                 if(self.dynamicColumns) {
                     iframe.contentWindow.postMessage({
                         "columns" : self.dynamicColumns
+                    }, "*");
+                }
+
+                if(self.options) {
+                    iframe.contentWindow.postMessage({
+                        "options" : self.options
                     }, "*");
                 }
 
