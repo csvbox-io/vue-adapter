@@ -16,11 +16,29 @@
                 type: String,
                 required: true
             },
+            debugMode: {
+                type: Boolean,
+                required: false
+            },
+            useStagingServer: {
+                type: Boolean,
+                required: false
+            },
             onImport: {
                 type: Function,
-                default: function() {
-
-                }
+                default: function() {}
+            },
+            onReady: {
+                type: Function,
+                default: function() {}
+            },
+            onSubmit: {
+                type: Function,
+                default: function() {}
+            },
+            onClose:{
+                type: Function,
+                default: function() {}
             },
             user: {
                 type: Object,
@@ -41,26 +59,32 @@
                 }
             }
         },
+        computed:{
+            iframeSrc() {
+                let BASE_URL = `https://${this.useStagingServer ? 'staging' : 'app' }.csvbox.io/embed/${this.licenseKey}`;
+                return `${BASE_URL}?library-version=2&source=embedCode&sourceLang=vue`;
+            }
+        },
         data(){
-            return{
-                iframeSrc: "https://app.csvbox.io/embed/" + this.licenseKey,
+            return {
                 isModalShown: false,
-                uniqueToken: null,
                 disableImportButton: true,
+                uuid: this._uid + '_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
             }
         },
         methods: {
             openModal() {
                 if(!this.isModalShown) {
+                    this.isModalShown = true;
                     this.$refs.holder.style.display = 'block';
                     this.$refs.iframe.contentWindow.postMessage('openModal', '*');
-                    this.isModalShown = true;
                 }
             },
             onMessageEvent(event) {
                 if (event.data === "mainModalHidden") {
                     this.$refs.holder.style.display = 'none';
                     this.isModalShown = false;
+                    this.onClose();
                 }
                 if(event.data === "uploadSuccessful") {
                     this.onImport(true);
@@ -69,10 +93,53 @@
                     this.onImport(false);
                 }
                 if(typeof event.data == "object") {
-                    if(event?.data?.data?.unique_token == this.uniqueToken) {
-                        if(event.data.type && event.data.type == "data-push-status") {
+                    if(event?.data?.data?.unique_token == this.uuid) {
+                        if(event.data.type && event.data.type == "data-on-submit") {
+                            let metadata = event.data.data;
+                            metadata["column_mappings"] = event.data.column_mapping;
+                            // this.callback(true, metadata);
+                            delete metadata["unique_token"];
+                            this.onSubmit?.(metadata);
+                        }
+                        else if(event.data.type && event.data.type == "data-push-status") {
                             if(event.data.data.import_status == "success") {
-                                this.onImport(true, event.data.data);
+                                if(event.data && event.data.row_data) {
+                                    let primary_row_data = event.data.row_data;
+                                    let headers = event.data.headers;
+                                    let rows = [];
+                                    let dynamic_columns_indexes = event.data.dynamicColumnsIndexes;
+                                    let dropdown_display_labels_mappings = event.data.dropdown_display_labels_mappings;
+                                    primary_row_data.forEach((row_data) => {
+                                        let x = {};
+                                        let dynamic_columns = {};
+                                        row_data.data.forEach((col, i)=>{
+                                            if(col == undefined){ col = "" }
+                                            if(!!dropdown_display_labels_mappings[i] && !!dropdown_display_labels_mappings[i][col]) {
+                                                col = dropdown_display_labels_mappings[i][col];
+                                            }
+                                            if(dynamic_columns_indexes.includes(i)) {
+                                                dynamic_columns[headers[i]] = col;
+                                            }else{
+                                                x[headers[i]] = col;
+                                            }
+                                        });
+                                        if(row_data.unmapped_data) {
+                                            x["_unmapped_data"] = row_data.unmapped_data;
+                                        }
+                                        if(dynamic_columns && Object.keys(dynamic_columns).length > 0) {
+                                            x["_dynamic_data"] = dynamic_columns;
+                                        }
+                                        rows.push(x);
+                                    });
+                                    let metadata = event.data.data;
+                                    metadata["rows"] = rows;
+                                    delete metadata["unique_token"];
+                                    this.onImport(true, metadata);
+                                }else{
+                                    let metadata = event.data.data;
+                                    delete metadata["unique_token"];
+                                    this.onImport(true, metadata);
+                                }
                             } else {
                                 this.onImport(false, event.data.data);
                             }
@@ -92,8 +159,6 @@
         },
         mounted() {
 
-            this.uniqueToken = this._uid + "_" + this.randomString();
-
             window.addEventListener("message", this.onMessageEvent, false);
 
             let iframe = this.$refs.iframe;
@@ -102,31 +167,16 @@
 
             iframe.onload = function () {
 
-                if(self.uniqueToken) {
-                    iframe.contentWindow.postMessage({
-                        "unique_token" : self.uniqueToken
-                    }, "*");
-                }
-                if(self.user) {
-                    iframe.contentWindow.postMessage({
-                        "customer" : self.user
-                    }, "*");
-                }
-                if(self.dynamicColumns) {
-                    iframe.contentWindow.postMessage({
-                        "columns" : self.dynamicColumns
-                    }, "*");
-                }
-
-                if(self.options) {
-                    iframe.contentWindow.postMessage({
-                        "options" : self.options
-                    }, "*");
-                }
+                iframe.contentWindow.postMessage({
+                    "customer" : self.user ? self.user : null,
+                    "columns" : self.dynamicColumns ? self.dynamicColumns : null,
+                    "options" : self.options ? self.options : null,
+                    "unique_token": self.uuid
+                }, "*");
 
                 self.disableImportButton = false;
 
-                self.$emit('onload');
+                self.onReady();
 
             }
         },
