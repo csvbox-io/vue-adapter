@@ -1,7 +1,7 @@
 <template>
   <div>
     <CSVBoxButton 
-      licenseKey="ku7TPp0YwGRD6qEmbTKOZTI5df0o6O" 
+      licenseKey="Sheet License Key" 
       :user="{ user_id: 'default123' }" 
       :onImport="onImport"
       :onReady="onReady"
