@@ -9,20 +9,16 @@
     </div>
 </template>
 <script>
+
+    import { version } from "../../package.json"
+    import { Logger } from "./../utils/Logger";
+
     export default{
         name: 'csvbox-button',
         props: {
             licenseKey: {
                 type: String,
                 required: true
-            },
-            debugMode: {
-                type: Boolean,
-                required: false
-            },
-            useStagingServer: {
-                type: Boolean,
-                required: false
             },
             onImport: {
                 type: Function,
@@ -57,27 +53,55 @@
                 default: function () {
                     return { user_id: 'default123' };
                 }
+            },
+            dataLocation: {
+                type: String,
+                required: false
+            },
+            customDomain: {
+                type: String,
+                required: false
+            },
+            debug: {
+                type: String,
+                required: false,
+                default: null
             }
         },
         computed:{
             iframeSrc() {
-                let BASE_URL = `https://${this.useStagingServer ? 'staging' : 'app' }.csvbox.io/embed/${this.licenseKey}`;
-                return `${BASE_URL}?library-version=2&source=embedCode&sourceLang=vue`;
+                let domain = this.customDomain ? this.customDomain : "app.csvbox.io";
+                if(this.dataLocation) { 
+                    domain = `${this.dataLocation}-${domain}`;
+                }
+
+                let iframeUrl = `https://${domain}/embed/${this.licenseKey}`;
+                iframeUrl += `?library-version=${version}`;
+                iframeUrl += "&framework=vue";
+                if(this.dataLocation) {
+                    iframeUrl += "&preventRedirect";
+                }
+                return iframeUrl;
             }
         },
         data(){
             return {
                 isModalShown: false,
                 disableImportButton: true,
-                uuid: this._uid + '_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+                uuid: this._uid + '_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
+                logger: new Logger(this.debug)
             }
         },
         methods: {
             openModal() {
+                this.logger.info("openModal();");
                 if(!this.isModalShown) {
+                    this.logger.verbose("Opening importer modal");
                     this.isModalShown = true;
                     this.$refs.holder.style.display = 'block';
                     this.$refs.iframe.contentWindow.postMessage('openModal', '*');
+                }else{
+                    this.logger.verbose("Modal already showing or shown");
                 }
             },
             onMessageEvent(event) {
@@ -94,10 +118,12 @@
                 }
                 if(typeof event.data == "object") {
                     if(event?.data?.data?.unique_token == this.uuid) {
+
+                        this.logger.verbose("Event:", `'${event.data.type}'`, event.data.data);
+
                         if(event.data.type && event.data.type == "data-on-submit") {
                             let metadata = event.data.data;
                             metadata["column_mappings"] = event.data.column_mapping;
-                            // this.callback(true, metadata);
                             delete metadata["unique_token"];
                             this.onSubmit?.(metadata);
                         }
@@ -157,21 +183,31 @@
                             } else {
                                 this.onImport(false, event.data.data);
                             }
+                        }else if(event.data.type && event.data.type == "csvbox-modal-hidden") {
+                            this.$refs.holder.style.display = 'none';
+                            this.isModalShown = false;
+                            this.onClose();
+                        } else if(event.data.type && event.data.type == "csvbox-upload-successful") {
+                            this.onImport(true);
+                        } else if(event.data.type && event.data.type == "csvbox-upload-failed") {
+                            this.onImport(false);
                         }
                     }
                 }
-            },
-            randomString() {
-                let result = '';
-                let characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
-                let charactersLength = characters.length;
-                for (let i = 0; i < 20; i++) {
-                    result += characters.charAt(Math.floor(Math.random() * charactersLength)); 
-                }
-                return result;
             }
         },
         mounted() {
+
+            this.logger.info("Framework:", "Vue");
+            this.logger.info("Library version:", version);
+            if(this.customDomain){
+                this.logger.info("Using domain:", this.customDomain);
+            }
+            if(this.dataLocation) {
+                this.logger.info("Data location:", this.dataLocation);
+            }
+
+            this.logger.info("Importer url:", this.iframeSrc);
 
             window.addEventListener("message", this.onMessageEvent, false);
 
@@ -180,6 +216,8 @@
             let self = this;
 
             iframe.onload = function () {
+
+                self.logger.info("Importer ready");
 
                 iframe.contentWindow.postMessage({
                     "customer" : self.user ? self.user : null,
@@ -195,6 +233,7 @@
             }
         },
         beforeDestroy() {
+            this.logger.verbose("Removing message event listener");
             window.removeEventListener("message", this.onMessageEvent);
         }
     }
