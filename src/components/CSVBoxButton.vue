@@ -3,9 +3,7 @@
         <button :disabled="disableImportButton" @click="openModal">
             <slot></slot>
         </button>
-        <div ref="holder" class="holder-style">
-            <iframe ref="iframe" class="iframe" :src="iframeSrc" frameBorder="0"></iframe>
-        </div>
+        <div ref="holder" class="holder-style"></div>
     </div>
 </template>
 <script>
@@ -66,6 +64,15 @@
                 type: String,
                 required: false,
                 default: null
+            },
+            language: {
+                type: String,
+                required: false
+            },
+            lazy: {
+                type: Boolean,
+                required: false,
+                default: false
             }
         },
         computed:{
@@ -81,6 +88,9 @@
                 if(this.dataLocation) {
                     iframeUrl += "&preventRedirect";
                 }
+                if(this.language) {
+                    iframeUrl += "&language=" + this.language;
+                }
                 return iframeUrl;
             }
         },
@@ -89,20 +99,39 @@
                 isModalShown: false,
                 disableImportButton: true,
                 uuid: this._uid + '_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
-                logger: new Logger(this.debug)
+                logger: new Logger(this.debug),
+                iframe: null,
+                isIframeLoaded: false,
+                openModalOnIframeLoad: false,
             }
         },
         methods: {
             openModal() {
+
+                if(this.lazy) {
+                    if(!this.iframe) {
+                        this.openModalOnIframeLoad = true;
+                        this.initImporter();
+                        return;
+                    }
+                }
+                
                 this.logger.info("openModal();");
+                
                 if(!this.isModalShown) {
-                    this.logger.verbose("Opening importer modal");
-                    this.isModalShown = true;
-                    this.$refs.holder.style.display = 'block';
-                    this.$refs.iframe.contentWindow.postMessage('openModal', '*');
+                    if(this.isIframeLoaded) {
+                        this.logger.verbose("Opening importer modal");
+                        this.isModalShown = true;
+                        this.$refs.holder.style.display = 'block';
+                        console.log(this.iframe)
+                        this.iframe.contentWindow.postMessage('openModal', '*');
+                    } else {
+                        this.openModalOnIframeLoad = true;
+                    }                    
                 }else{
                     this.logger.verbose("Modal already showing or shown");
                 }
+                
             },
             onMessageEvent(event) {
                 if (event.data === "mainModalHidden") {
@@ -194,43 +223,55 @@
                         }
                     }
                 }
+            },
+            initImporter() {
+                this.logger.info("Framework:", "Vue");
+                this.logger.info("Library version:", version);
+                if(this.customDomain){
+                    this.logger.info("Using domain:", this.customDomain);
+                }
+                if(this.dataLocation) {
+                    this.logger.info("Data location:", this.dataLocation);
+                }
+                this.logger.info("Importer url:", this.iframeSrc);
+
+                let iframe = document.createElement("iframe");
+                this.iframe = iframe;
+                iframe.setAttribute("src", this.iframeSrc);
+                iframe.frameBorder = 0;
+                iframe.classList.add('csvbox-iframe');
+
+                window.addEventListener("message", this.onMessageEvent, false);
+
+                let self = this;
+
+                iframe.onload = function () {
+                    self.isIframeLoaded = true;
+                    self.logger.info("Importer ready");
+                    iframe.contentWindow.postMessage({
+                        "customer" : self.user ? self.user : null,
+                        "columns" : self.dynamicColumns ? self.dynamicColumns : null,
+                        "options" : self.options ? self.options : null,
+                        "unique_token": self.uuid
+                    }, "*");
+                    self.disableImportButton = false;
+                    self.onReady();
+                    if(self.openModalOnIframeLoad) {
+                        self.openModal();
+                    }
+                }
+
+                this.$refs.holder.appendChild(iframe);
+
             }
         },
         mounted() {
-
-            this.logger.info("Framework:", "Vue");
-            this.logger.info("Library version:", version);
-            if(this.customDomain){
-                this.logger.info("Using domain:", this.customDomain);
+            if(this.lazy) {
+                this.disableImportButton = false;
+            } else {
+                this.initImporter();
             }
-            if(this.dataLocation) {
-                this.logger.info("Data location:", this.dataLocation);
-            }
-
-            this.logger.info("Importer url:", this.iframeSrc);
-
-            window.addEventListener("message", this.onMessageEvent, false);
-
-            let iframe = this.$refs.iframe;
-
-            let self = this;
-
-            iframe.onload = function () {
-
-                self.logger.info("Importer ready");
-
-                iframe.contentWindow.postMessage({
-                    "customer" : self.user ? self.user : null,
-                    "columns" : self.dynamicColumns ? self.dynamicColumns : null,
-                    "options" : self.options ? self.options : null,
-                    "unique_token": self.uuid
-                }, "*");
-
-                self.disableImportButton = false;
-
-                self.onReady();
-
-            }
+            
         },
         beforeDestroy() {
             this.logger.verbose("Removing message event listener");
@@ -248,11 +289,13 @@
         left: 0;
         right: 0;
     }
-    .iframe {
-        height: 100%;
-        width: 100%;
-        position: absolute;
-        top: 0;
-        left: 0;
-    }
+</style>
+<style>
+.csvbox-iframe {
+    height: 100%;
+    width: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
 </style>
