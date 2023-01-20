@@ -123,7 +123,6 @@
                         this.logger.verbose("Opening importer modal");
                         this.isModalShown = true;
                         this.$refs.holder.style.display = 'block';
-                        console.log(this.iframe)
                         this.iframe.contentWindow.postMessage('openModal', '*');
                     } else {
                         this.openModalOnIframeLoad = true;
