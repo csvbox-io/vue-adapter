@@ -73,6 +73,10 @@
                 type: Boolean,
                 required: false,
                 default: false
+            },
+            loadStarted: {
+                type: Function,
+                default: function() {}
             }
         },
         computed:{
@@ -224,6 +228,7 @@
                 }
             },
             initImporter() {
+                this.loadStarted();
                 this.logger.info("Framework:", "Vue");
                 this.logger.info("Library version:", version);
                 if(this.customDomain){
