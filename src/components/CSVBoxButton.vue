@@ -205,6 +205,9 @@
                                     });
                                     let metadata = event.data.data;
                                     metadata["rows"] = rows;
+                                    metadata["column_mappings"] = event.data.column_mapping;
+                                    metadata["raw_columns"] = event.data.raw_columns;
+                                    metadata["ignored_columns"] = event.data.ignored_column_row;
                                     delete metadata["unique_token"];
                                     this.onImport(true, metadata);
                                 }else{
