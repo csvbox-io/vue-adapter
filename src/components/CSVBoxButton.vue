@@ -40,7 +40,7 @@
                     return { user_id: 'default123' };
                 }
             },
-            dynamicColumns:{
+            dynamicColumns: {
                 type: Array,
                 default: function () {
                     return null;
@@ -77,7 +77,13 @@
             loadStarted: {
                 type: Function,
                 default: function() {}
-            }
+            },
+            environment: {
+                type: Object,
+                default: function () {
+                    return null;
+                }
+            },
         },
         computed:{
             iframeSrc() {
@@ -95,6 +101,14 @@
                 if(this.language) {
                     iframeUrl += "&language=" + this.language;
                 }
+
+                if(this.environment) {
+                    let environment = JSON.stringify(this.environment).replace(/['"]/g, function(match) {
+                        return '\\' + match;
+                    });
+                    iframeUrl += `&env=${environment}`;
+                }
+
                 return iframeUrl;
             }
         },
