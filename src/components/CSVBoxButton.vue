@@ -1,6 +1,6 @@
 <template>
     <div>
-        <button :disabled="disableImportButton" @click="openModal">
+        <button :disabled="disableImportButton" @click.prevent="openModal">
             <slot></slot>
         </button>
         <div ref="holder" class="holder-style"></div>
