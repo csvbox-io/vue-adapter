@@ -1,6 +1,6 @@
 {
   "name": "@csvbox/vuejs",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "description": "Vue adapter for csvbox.io",
   "author": "csvbox-io",
   "license": "MIT",
@@ -47,8 +47,10 @@
     "not dead"
   ],
   "main": "./dist/csvbox-vuejs.common.js",
+  "types": "types/index.d.ts",
   "files": [
     "dist/*",
+    "types/*",
     "src/*",
     "public/*",
     "*.json",
