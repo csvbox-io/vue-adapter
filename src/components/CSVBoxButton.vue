@@ -84,10 +84,16 @@
                     return null;
                 }
             },
+            theme: {
+                type: String,
+                required: false
+            },
         },
         computed:{
             iframeSrc() {
+
                 let domain = this.customDomain ? this.customDomain : "app.csvbox.io";
+                
                 if(this.dataLocation) { 
                     domain = `${this.dataLocation}-${domain}`;
                 }
@@ -95,11 +101,17 @@
                 let iframeUrl = `https://${domain}/embed/${this.licenseKey}`;
                 iframeUrl += `?library-version=${version}`;
                 iframeUrl += "&framework=vue";
+                
                 if(this.dataLocation) {
                     iframeUrl += "&preventRedirect";
                 }
+                
                 if(this.language) {
                     iframeUrl += "&language=" + this.language;
+                }
+
+                if(this.theme) {
+                    iframeUrl += "&theme=" + this.theme;
                 }
 
                 if(this.environment) {
