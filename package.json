@@ -15,7 +15,10 @@
     "build": "vue-cli-service build --target lib --name csvbox-vuejs ./src/index.js"
   },
   "dependencies": {
-    "core-js": "^3.6.5",
+    "@csvbox/adapter": "^0.0.1",
+    "core-js": "^3.6.5"
+  },
+  "peerDependencies": {
     "vue": "^2.6.11"
   },
   "devDependencies": {
@@ -25,7 +28,8 @@
     "babel-eslint": "^10.1.0",
     "eslint": "^6.7.2",
     "eslint-plugin-vue": "^6.2.2",
-    "vue-template-compiler": "^2.6.11"
+    "vue": "^2.7.16",
+    "vue-template-compiler": "^2.7.16"
   },
   "eslintConfig": {
     "root": true,
