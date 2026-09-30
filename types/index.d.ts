@@ -36,7 +36,13 @@ declare module '@csvbox/vuejs' {
       environment?: CSVBoxEnvironment | null;
     }
     
-    const CSVBoxButton: DefineComponent<CSVBoxButtonProps>;
+    export interface CSVBoxButtonMethods {
+      openModal(): void;
+      /** Open the importer on a File the host page already has, instead of the file picker. */
+      openModalWithFile(file: File): void;
+    }
+    
+    const CSVBoxButton: DefineComponent<CSVBoxButtonProps, {}, {}, {}, CSVBoxButtonMethods>;
     
     export default CSVBoxButton;
     
