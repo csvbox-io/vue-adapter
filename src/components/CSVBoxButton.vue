@@ -98,12 +98,14 @@
             },
         },
         computed: {
-            // Only postPendingFile() uses this. The config messages keep their "*" target: narrowing
-            // those would silently drop the handshake for any customDomain that redirects to another
-            // host, and breaking existing importers is not worth it. A file is different -- its bytes
-            // are the end user's, so they go to a named origin or nowhere.
+            // Default place to send the file. A file is only ever sent to a named origin, never "*".
             targetOrigin() {
                 return new URL(this.iframeSrc).origin;
+            },
+            // Data-location sheets redirect to another host, so the iframe origin can differ from
+            // targetOrigin. baseDomain is used to check the real origin before trusting it.
+            baseDomain() {
+                return this.customDomain || "app.csvbox.io";
             },
             iframeSrc() {
                 return buildImportUrl(
@@ -130,6 +132,8 @@
                 isModalShown: false,
                 isIframeLoaded: false,
                 pendingFile: null,
+                importerOrigin: null,
+                probingOrigin: false,
             };
         },
         methods: {
@@ -210,12 +214,70 @@
                 this.openModal();
             },
             postPendingFile() {
-                this.iframe.contentWindow.postMessage({
-                    type: 'csvbox-set-file',
-                    file: this.pendingFile,
-                    unique_token: this.uuid
-                }, this.targetOrigin);
-                this.pendingFile = null;
+              if (this.importerOrigin) {
+                this.sendPendingFile(this.importerOrigin);
+                return;
+              }
+
+              // Origin not known yet: send a probe without the file, and send the file to the origin
+              // that replies. If nobody replies in time, use targetOrigin like before.
+              if (this.probingOrigin) {
+                return;
+              }
+              this.probingOrigin = true;
+              this.iframe.contentWindow.postMessage({
+                type: 'csvbox-set-file',
+                unique_token: this.uuid
+              }, '*');
+              this.probeTimer = setTimeout(() => {
+                this.probeTimer = null;
+                this.probingOrigin = false;
+                this.sendPendingFile(this.targetOrigin);
+              }, 1500);
+            },
+            sendPendingFile(origin) {
+              if (!this.pendingFile || !this.iframe) {
+                return;
+              }
+              this.iframe.contentWindow.postMessage({
+                type: 'csvbox-set-file',
+                file: this.pendingFile,
+                unique_token: this.uuid
+              }, origin);
+              this.pendingFile = null;
+            },
+            // Remember the importer's origin, only from our own iframe, with our token, and a csvbox host.
+            learnImporterOrigin(event) {
+              if (this.importerOrigin || !this.iframe || event.source !== this.iframe.contentWindow) {
+                return;
+              }
+              if (!this.isImporterOrigin(event.origin)) {
+                return;
+              }
+              this.importerOrigin = event.origin;
+              if (this.probingOrigin) {
+                this.probingOrigin = false;
+                this.clearProbeTimer();
+                this.sendPendingFile(this.importerOrigin);
+              }
+            },
+            isImporterOrigin(origin) {
+              let url;
+              try {
+                url = new URL(origin);
+              } catch (e) {
+                return false;
+              }
+              if (url.protocol !== 'https:') {
+                return false;
+              }
+              return url.host === this.baseDomain || url.host.endsWith('-' + this.baseDomain);
+            },
+            clearProbeTimer() {
+              if (this.probeTimer) {
+                clearTimeout(this.probeTimer);
+                this.probeTimer = null;
+              }
             },
             onMessageEvent(event) {
                 let legacy = classifyLegacyMessage(event.data);
@@ -236,6 +298,12 @@
                 // read here, behind the same unique_token check the core applies.
                 let raw = event.data;
                 if (raw && typeof raw === "object" && raw.data && raw.data.unique_token == this.uuid) {
+                    this.learnImporterOrigin(event);
+
+                    if (raw.type === "csvbox-set-file-rejected" && raw.data.reason === "not-a-file") {
+                        // Reply to our probe (it has no file). It only tells us the origin, so do nothing.
+                        return;
+                    }
                     if (raw.type === "csvbox-modal-shown") {
                         // What the file path in openModal() is waiting for. display as well as
                         // pointer-events: a second file declined while the first was still opening
@@ -286,6 +354,10 @@
                     this.$refs.holder.innerHTML = '';
                 }
                 this.lifecycle.markClosed();
+                // A new iframe is built on the next open, so the origin is learned again.
+                this.importerOrigin = null;
+                this.probingOrigin = false;
+                this.clearProbeTimer();
                 this.isModalShown = false;
                 this.isIframeLoaded = false;
                 this.iframe = null;
@@ -337,6 +409,7 @@
         beforeDestroy() {
             this.logger.verbose("Removing message event listener");
             window.removeEventListener("message", this.onMessageEvent);
+            this.clearProbeTimer();
         }
     }
 </script>
