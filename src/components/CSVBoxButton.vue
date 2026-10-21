@@ -303,6 +303,7 @@
                 unique_token: this.uuid
               }, origin);
               this.pendingFile = null;
+              this.startFileAckTimer();
             },
             // Remember the importer's origin, only from our own iframe, with our token, and a csvbox host.
             learnImporterOrigin(event) {
@@ -332,10 +333,39 @@
               return url.host === this.baseDomain || url.host.endsWith('-' + this.baseDomain);
             },
             clearProbeTimer() {
-              if (this.probeTimer) {
-                clearTimeout(this.probeTimer);
-                this.probeTimer = null;
-              }
+                this.clearFileAckTimer();
+                if (this.probeTimer) {
+                    clearTimeout(this.probeTimer);
+                    this.probeTimer = null;
+                }
+            },
+            startFileAckTimer() {
+                this.clearFileAckTimer();
+                this.fileAckTimer = setTimeout(() => {
+                    this.fileAckTimer = null;
+                    this.giveUpOnFile();
+                }, 8000);
+            },
+            clearFileAckTimer() {
+                if (this.fileAckTimer) {
+                    clearTimeout(this.fileAckTimer);
+                    this.fileAckTimer = null;
+                }
+            },
+            // The importer never confirmed the file it was sent (an origin we do not trust, or an importer too
+            // old to know the message). Without this the holder would stay up, invisible and click-through,
+            // and the other instances' buttons would stay disabled for good.
+            giveUpOnFile() {
+                if (this.isModalShown) {
+                    return;
+                }
+                const holder = this.$refs.holder;
+                if (holder) {
+                    holder.style.display = 'none';
+                    holder.style.pointerEvents = 'auto';
+                }
+                unregisterOpenImporter(this.registryEntry);
+                console.warn("[csvbox] the importer did not respond to the supplied file");
             },
             onMessageEvent(event) {
                 let legacy = classifyLegacyMessage(event.data);
@@ -368,6 +398,8 @@
                         return;
                     }
                     if (raw.type === "csvbox-modal-shown") {
+                        this.clearFileAckTimer();
+                        registerOpenImporter(this.registryEntry);
                         // What the file path in openModal() is waiting for. display as well as
                         // pointer-events: a second file declined while the first was still opening
                         // the modal has put the holder away in the meantime.
@@ -378,6 +410,7 @@
                         return;
                     }
                     if (raw.type === "csvbox-set-file-rejected") {
+                        this.clearFileAckTimer();
                         // The importer has the file and will not take it. Put the holder away only if
                         // the modal was never confirmed up: a file declined while it is open leaves
                         // that modal where it is, and its own 'csvbox-modal-hidden' will put the
