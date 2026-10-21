@@ -15,7 +15,7 @@
     "build": "vue-cli-service build --target lib --name csvbox-vuejs ./src/index.js"
   },
   "dependencies": {
-    "@csvbox/adapter": "^0.0.1",
+    "@csvbox/adapter": "^0.1.0",
     "core-js": "^3.6.5"
   },
   "peerDependencies": {
