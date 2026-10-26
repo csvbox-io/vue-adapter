@@ -43,8 +43,5 @@ export default {
       console.log("onClose")
     }
   },
-  mounted() {
-    
-  },
 }
 </script>

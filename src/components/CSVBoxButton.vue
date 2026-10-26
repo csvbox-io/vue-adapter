@@ -1,6 +1,6 @@
 <template>
     <div>
-        <button :disabled="disableImportButton" @click.prevent="openModal">
+        <button :disabled="disableImportButton || blockedByOther" @click.prevent="openModal">
             <slot></slot>
         </button>
         <div ref="holder" class="holder-style"></div>
@@ -8,10 +8,26 @@
 </template>
 <script>
 
-    import { version } from "../../package.json"
-    import { Logger } from "./../utils/Logger";
+    import { version } from "../../package.json";
+    import { Logger } from "../utils/Logger";
 
-    export default{
+    import {
+        buildImportUrl,
+        generateUuid,
+        buildInitPayload,
+        createModalLifecycle,
+        createMessageGate,
+        createImportTracker,
+        createFileSender,
+        classifyStructuredMessage,
+        classifyLegacyMessage,
+        registerOpenImporter,
+        unregisterOpenImporter,
+        isBlockedByOpenImporter,
+        subscribeOpenImporters
+    } from '@csvbox/adapter';
+
+    export default {
         name: 'csvbox-button',
         props: {
             licenseKey: {
@@ -30,7 +46,7 @@
                 type: Function,
                 default: function() {}
             },
-            onClose:{
+            onClose: {
                 type: Function,
                 default: function() {}
             },
@@ -89,110 +105,96 @@
                 required: false
             },
         },
-        computed:{
-            importerDomain() {
-                let domain = this.customDomain ? this.customDomain : "app.csvbox.io";
-                if(this.dataLocation) {
-                    domain = `${this.dataLocation}-${domain}`;
-                }
-                return domain;
-            },
-            // Only postPendingFile() uses this. The config messages keep their "*" target: narrowing
-            // those would silently drop the handshake for any customDomain that redirects to another
-            // host, and breaking existing importers is not worth it. A file is different — its bytes
-            // are the end user's, so they go to a named origin or nowhere.
+        computed: {
+            // Default place to send the file. A file is only ever sent to a named origin, never "*".
             targetOrigin() {
-                return `https://${this.importerDomain}`;
+                return new URL(this.iframeSrc).origin;
+            },
+            // Data-location sheets redirect to another host, so the iframe origin can differ from
+            // targetOrigin. baseDomain is used to check the real origin before trusting it.
+            baseDomain() {
+                return this.customDomain || "app.csvbox.io";
             },
             iframeSrc() {
-
-                let iframeUrl = `https://${this.importerDomain}/embed/${this.licenseKey}`;
-                iframeUrl += `?library-version=${version}`;
-                iframeUrl += "&framework=vue";
-                
-                if(this.dataLocation) {
-                    iframeUrl += "&preventRedirect";
-                }
-                
-                if(this.language) {
-                    iframeUrl += "&language=" + this.language;
-                }
-
-                if(this.theme) {
-                    iframeUrl += "&theme=" + this.theme;
-                }
-
-                if(this.environment) {
-                    let environment = JSON.stringify(this.environment).replace(/['"]/g, function(match) {
-                        return '\\' + match;
-                    });
-                    iframeUrl += `&env=${environment}`;
-                }
-
-                return iframeUrl;
+                return buildImportUrl(
+                    {
+                        licenseKey: this.licenseKey,
+                        customDomain: this.customDomain,
+                        dataLocation: this.dataLocation,
+                        language: this.language,
+                        theme: this.theme,
+                        environment: this.environment
+                    },
+                    "vue",
+                    version
+                );
             }
         },
-        data(){
+        data() {
             return {
-                isModalShown: false,
                 disableImportButton: true,
-                uuid: this._uid + '_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
+                uuid: generateUuid(),
                 logger: new Logger(this.debug),
                 iframe: null,
+                lifecycle: createModalLifecycle(),
+                isModalShown: false,
                 isIframeLoaded: false,
-                openModalOnIframeLoad: false,
                 pendingFile: null,
-            }
+                // True while a different importer on the page is open: the button stays disabled.
+                blockedByOther: false,
+            };
         },
         methods: {
             openModal() {
+                // Counts as open from the moment it is requested, so the other buttons are disabled
+                // while this importer is still loading, and so it is stacked above any importer
+                // opened earlier.
+                registerOpenImporter(this.registryEntry);
+                if(!this.iframe) {
+                    this.lifecycle.requestOpen();
+                    this.initImporter();
+                    return;
+                }
 
-                if(this.lazy) {
-                    if(!this.iframe) {
-                        this.openModalOnIframeLoad = true;
-                        this.initImporter();
+                this.logger.info("openModal();");
+
+                if(this.pendingFile) {
+                    if(!this.isIframeLoaded) {
+                        // Deferred: onload's markReady() calls openModal() again once the iframe is up.
+                        this.lifecycle.requestOpen();
                         return;
                     }
+                    // The importer opens its own modal once it has the file, so that it can
+                    // inject on 'shown.bs.modal'. Sending 'openModal' as well would race that.
+                    //
+                    // It can also decline: wrong step, an import file URL configured on the
+                    // sheet, or an importer too old to know the message at all. So the holder
+                    // goes up click-through and stays that way until 'csvbox-modal-shown'
+                    // confirms the modal is really up. It covers the viewport at z-index
+                    // 2147483647 and the importer renders transparent with its modal closed,
+                    // so arming it on an unanswered message leaves an invisible sheet over the
+                    // host page eating every click.
+                    //
+                    // display:block regardless, so the iframe lays out and animates normally;
+                    // only pointer-events is held back. isModalShown likewise waits for the
+                    // confirmation, or a declined file would latch the importer shut for good.
+                    this.logger.verbose("Opening importer modal with a supplied file");
+                    this.$refs.holder.style.pointerEvents = 'none';
+                    this.$refs.holder.style.display = 'block';
+                    this.fileSender.send();
+                    return;
                 }
-                
-                this.logger.info("openModal();");
-                
-                if(!this.isModalShown) {
-                    if(this.isIframeLoaded) {
-                        if(this.pendingFile) {
-                            // The importer opens its own modal once it has the file, so that it can
-                            // inject on 'shown.bs.modal'. Sending 'openModal' as well would race that.
-                            //
-                            // It can also decline: wrong step, an import file URL configured on the
-                            // sheet, or an importer too old to know the message at all. So the holder
-                            // goes up click-through and stays that way until 'csvbox-modal-shown'
-                            // confirms the modal is really up. It covers the viewport at z-index
-                            // 2147483647 and the importer renders transparent with its modal closed,
-                            // so arming it on an unanswered message leaves an invisible sheet over the
-                            // host page eating every click.
-                            //
-                            // display:block regardless, so the iframe lays out and animates normally;
-                            // only pointer-events is held back. isModalShown likewise waits for the
-                            // confirmation, or a declined file would latch the importer shut for good.
-                            this.logger.verbose("Opening importer modal with a supplied file");
-                            this.$refs.holder.style.pointerEvents = 'none';
-                            this.$refs.holder.style.display = 'block';
-                            this.postPendingFile();
-                        } else {
-                            this.logger.verbose("Opening importer modal");
-                            this.isModalShown = true;
-                            // Explicit: a previously declined file leaves the holder click-through.
-                            this.$refs.holder.style.pointerEvents = 'auto';
-                            this.$refs.holder.style.display = 'block';
-                            this.iframe.contentWindow.postMessage('openModal', '*');
-                        }
-                    } else {
-                        this.openModalOnIframeLoad = true;
-                    }                    
-                }else{
-                    this.logger.verbose("Modal already showing or shown");
+
+                if(this.lifecycle.requestOpen()) {
+                    this.logger.verbose("Opening importer modal");
+                    this.isModalShown = true;
+                    // Explicit: a previously declined file leaves the holder click-through.
+                    this.$refs.holder.style.pointerEvents = 'auto';
+                    this.$refs.holder.style.display = 'block';
+                    this.iframe.contentWindow.postMessage('openModal', '*');
+                } else {
+                    this.logger.verbose("Modal already showing, shown, or queued to open once ready");
                 }
-                
             },
             /**
              * Open the importer on a File the host page already has, instead of the file picker.
@@ -201,7 +203,7 @@
              * (`this.$refs.importer.openModalWithFile(file)`).
              *
              * The File crosses to the iframe by structured clone, so the importer receives the real
-             * object and applies its own extension, worksheet and size rules to it — this does not
+             * object and applies its own extension, worksheet and size rules to it -- this does not
              * bypass any of them. Pass a File; a Blob has no name for the importer to read an
              * extension from.
              */
@@ -217,133 +219,178 @@
                 // importer takes it only while it is still on the upload step, and ignores it once
                 // the user has a dataset and a mapping in progress.
                 if(this.isModalShown && this.iframe && this.isIframeLoaded) {
-                    this.postPendingFile();
+                    this.fileSender.send();
                     return;
                 }
 
                 this.openModal();
             },
-            postPendingFile() {
-                this.iframe.contentWindow.postMessage({
-                    type: 'csvbox-set-file',
-                    file: this.pendingFile,
-                    unique_token: this.uuid
-                }, this.targetOrigin);
-                this.pendingFile = null;
+            clearProbeTimer() {
+                this.clearFileAckTimer();
+                this.fileSender.reset();
+            },
+            startFileAckTimer() {
+                this.clearFileAckTimer();
+                this.fileAckTimer = setTimeout(() => {
+                    this.fileAckTimer = null;
+                    this.giveUpOnFile();
+                }, 8000);
+            },
+            clearFileAckTimer() {
+                if (this.fileAckTimer) {
+                    clearTimeout(this.fileAckTimer);
+                    this.fileAckTimer = null;
+                }
+            },
+            // The importer never confirmed the file it was sent (an origin we do not trust, or an importer too
+            // old to know the message). Without this the holder would stay up, invisible and click-through,
+            // and the other instances' buttons would stay disabled for good.
+            giveUpOnFile() {
+                if (this.isModalShown) {
+                    return;
+                }
+                const holder = this.$refs.holder;
+                if (holder) {
+                    holder.style.display = 'none';
+                    holder.style.pointerEvents = 'auto';
+                }
+                unregisterOpenImporter(this.registryEntry);
+                console.warn("[csvbox] the importer did not respond to the supplied file");
             },
             onMessageEvent(event) {
-                if (event.data === "mainModalHidden") {
-                    this.$refs.holder.style.display = 'none';
-                    this.isModalShown = false;
-                    this.onClose();
+                let legacy = classifyLegacyMessage(event.data);
+                if (legacy) {
+                    // Legacy messages carry no token, so the only way to tell which importer sent one
+                    // is its window. Ignore those that came from another instance's iframe (or anywhere else).
+                    if (!this.iframe || event.source !== this.iframe.contentWindow) {
+                        return;
+                    }
+                    // A newer importer sends the typed message as well; act on that one only.
+                    if (!this.messageGate.allowLegacy()) {
+                        return;
+                    }
+                    let ended = this.importTracker.observe(legacy);
+                    if (legacy.type === "mainModalHidden") {
+                        this.handleModalClosed();
+                    }
+                    if (legacy.type === "uploadSuccessful") {
+                        this.onImport(true);
+                    }
+                    if (legacy.type === "uploadFailed") {
+                        this.onImport(false);
+                    }
+                    this.finishImport(ended);
+                    return;
                 }
-                if(event.data === "uploadSuccessful") {
-                    this.onImport(true);
-                }
-                if(event.data === "uploadFailed") {
-                    this.onImport(false);
-                }
-                if(typeof event.data == "object") {
-                    if(event?.data?.data?.unique_token == this.uuid) {
 
-                        this.logger.verbose("Event:", `'${event.data.type}'`, event.data.data);
-
-                        if(event.data.type && event.data.type == "data-on-submit") {
-                            let metadata = event.data.data;
-                            metadata["column_mappings"] = event.data.column_mapping;
-                            delete metadata["unique_token"];
-                            this.onSubmit?.(metadata);
-                        }
-                        else if(event.data.type && event.data.type == "data-push-status") {
-                            if(event.data.data.import_status == "success") {
-                                if(event.data && event.data.row_data) {
-                                    let primary_row_data = event.data.row_data;
-                                    let headers = event.data.headers;
-                                    let rows = [];
-                                    let dynamic_columns_indexes = event.data.dynamicColumnsIndexes;
-                                    let virtual_columns_indexes = event.data.virtualColumnsIndexes || [];
-
-                                    let dropdown_display_labels_mappings = event.data.dropdown_display_labels_mappings;
-                                    primary_row_data.forEach((row_data) => {
-                                        
-                                        let x = {};
-                                        let dynamic_columns = {};
-                                        let virtual_data = {};
-                                        
-                                        row_data.data.forEach((col, i)=>{
-                                            if(col == undefined){ col = "" }
-                                            if(!!dropdown_display_labels_mappings[i] && !!dropdown_display_labels_mappings[i][col]) {
-                                                col = dropdown_display_labels_mappings[i][col];
-                                            }
-                                            if(dynamic_columns_indexes.includes(i)) {
-                                                dynamic_columns[headers[i]] = col;
-                                            }
-                                            else if(virtual_columns_indexes.includes(i)) {
-                                                virtual_data[headers[i]] = col;
-                                            }
-                                            else{
-                                                x[headers[i]] = col;
-                                            }
-                                        });
-
-                                        if(row_data.unmapped_data) {
-                                            x["_unmapped_data"] = row_data.unmapped_data;
-                                        }
-                                        if(dynamic_columns && Object.keys(dynamic_columns).length > 0) {
-                                            x["_dynamic_data"] = dynamic_columns;
-                                        }
-                                        if(virtual_data && Object.keys(virtual_data).length > 0) {
-                                            x["_virtual_data"] = virtual_data;
-                                        }
-
-                                        rows.push(x);
-                                    });
-                                    let metadata = event.data.data;
-                                    metadata["rows"] = rows;
-                                    metadata["column_mappings"] = event.data.column_mapping;
-                                    metadata["raw_columns"] = event.data.raw_columns;
-                                    metadata["ignored_columns"] = event.data.ignored_column_row;
-                                    delete metadata["unique_token"];
-                                    this.onImport(true, metadata);
-                                }else{
-                                    let metadata = event.data.data;
-                                    delete metadata["unique_token"];
-                                    this.onImport(true, metadata);
-                                }
-                            } else {
-                                this.onImport(false, event.data.data);
-                            }
-                        } else if(event.data.type && event.data.type == "csvbox-modal-shown") {
-                            // What the file path in openModal() is waiting for. display as well as
-                            // pointer-events: a second file declined while the first was still opening the
-                            // modal has put the holder away in the meantime.
-                            this.isModalShown = true;
-                            this.$refs.holder.style.display = 'block';
-                            this.$refs.holder.style.pointerEvents = 'auto';
-                        } else if(event.data.type && event.data.type == "csvbox-set-file-rejected") {
-                            // The importer has the file and will not take it. Put the holder away only if the
-                            // modal was never confirmed up: a file declined while it is open (an import past
-                            // the upload step, a fade-out under way) leaves that modal where it is, and its
-                            // own 'csvbox-modal-hidden' will put the holder away when it closes.
-                            if(!this.isModalShown) {
-                                this.$refs.holder.style.display = 'none';
-                                this.$refs.holder.style.pointerEvents = 'auto';
-                            }
-                            console.warn("[csvbox] importer declined the supplied file: " + event.data.data.reason);
-                        } else if(event.data.type && event.data.type == "csvbox-modal-hidden") {
+                // File handshake messages (what openModalWithFile waits for). handleMessage also learns the
+                // importer's origin from any message that carries this instance's token.
+                const fileMessage = this.fileSender.handleMessage(event);
+                if (fileMessage) {
+                    if (fileMessage.type === "probe-reply") {
+                        // Reply to our probe (it has no file). It only tells us the origin, so do nothing.
+                        return;
+                    }
+                    if (fileMessage.type === "modal-shown") {
+                        this.clearFileAckTimer();
+                        registerOpenImporter(this.registryEntry);
+                        // What the file path in openModal() is waiting for. display as well as
+                        // pointer-events: a second file declined while the first was still opening
+                        // the modal has put the holder away in the meantime.
+                        this.isModalShown = true;
+                        this.lifecycle.requestOpen();
+                        this.$refs.holder.style.display = 'block';
+                        this.$refs.holder.style.pointerEvents = 'auto';
+                        return;
+                    }
+                    if (fileMessage.type === "rejected") {
+                        this.clearFileAckTimer();
+                        // The importer has the file and will not take it. Put the holder away only if
+                        // the modal was never confirmed up: a file declined while it is open leaves
+                        // that modal where it is, and its own 'csvbox-modal-hidden' will put the
+                        // holder away when it closes.
+                        if (!this.isModalShown) {
                             this.$refs.holder.style.display = 'none';
                             this.$refs.holder.style.pointerEvents = 'auto';
-                            this.isModalShown = false;
-                            this.onClose();
-                        } else if(event.data.type && event.data.type == "csvbox-upload-successful") {
-                            this.onImport(true);
-                        } else if(event.data.type && event.data.type == "csvbox-upload-failed") {
-                            this.onImport(false);
+                            unregisterOpenImporter(this.registryEntry);
                         }
+                        console.warn("[csvbox] importer declined the supplied file: " + fileMessage.reason);
+                        return;
                     }
                 }
+
+                let message = classifyStructuredMessage(event.data, this.uuid);
+                if (!message) {
+                    return;
+                }
+
+                this.messageGate.markTyped();
+                let ended = this.importTracker.observe(message);
+                this.logger.verbose("Event:", `'${message.type}'`, event.data.data);
+
+                if (message.type === "data-on-submit") {
+                    this.onSubmit?.(message.metadata);
+                } else if (message.type === "data-push-status") {
+                    this.onImport(message.success, message.metadata);
+                } else if (message.type === "csvbox-modal-hidden") {
+                    this.handleModalClosed();
+                } else if (message.type === "csvbox-upload-successful") {
+                    this.onImport(true);
+                } else if (message.type === "csvbox-upload-failed") {
+                    this.onImport(false);
+                }
+                this.finishImport(ended);
+            },
+            handleModalClosed() {
+                if (this.importTracker.isInFlight()) {
+                    // Closed after submitting and before the result arrived: keep the iframe and its
+                    // listener so the late result still reaches onImport. It is removed once that
+                    // result has been delivered (see finishImport), so the next open is a fresh load.
+                    if (this.$refs.holder) {
+                        this.$refs.holder.style.display = 'none';
+                        this.$refs.holder.style.pointerEvents = 'auto';
+                    }
+                    this.lifecycle.markHidden();
+                    this.isModalShown = false;
+                    this.clearFileAckTimer();
+                    unregisterOpenImporter(this.registryEntry);
+                    this.onClose();
+                    return;
+                }
+                this.destroyImporter();
+                this.onClose();
+            },
+            // Called after the result of an import has been delivered. If the modal was closed in the
+            // meantime the iframe was only hidden, so remove it now.
+            finishImport(ended) {
+                if (ended && !this.isModalShown && this.iframe) {
+                    this.destroyImporter();
+                }
+            },
+            // Puts the importer away: the next open builds a new iframe with a new token.
+            destroyImporter() {
+                if (this.$refs.holder) {
+                    this.$refs.holder.style.display = 'none';
+                    this.$refs.holder.style.pointerEvents = 'auto';
+                    this.$refs.holder.innerHTML = '';
+                }
+                this.lifecycle.markClosed();
+                this.messageGate.reset();
+                this.importTracker.reset();
+                // A new iframe is built on the next open, so the origin is learned again.
+                this.clearProbeTimer();
+                this.isModalShown = false;
+                this.isIframeLoaded = false;
+                this.iframe = null;
+                unregisterOpenImporter(this.registryEntry);
+            },
+            syncBlocked() {
+                this.blockedByOther = isBlockedByOpenImporter(this.registryEntry);
             },
             initImporter() {
+                this.uuid = generateUuid();
+                this.messageGate.reset();
+                this.importTracker.reset();
                 this.loadStarted();
                 this.logger.info("Framework:", "Vue");
                 this.logger.info("Library version:", version);
@@ -364,39 +411,55 @@
 
                 window.addEventListener("message", this.onMessageEvent, false);
 
-                let self = this;
-
-                iframe.onload = function () {
-                    self.isIframeLoaded = true;
-                    self.logger.info("Importer ready");
-                    iframe.contentWindow.postMessage({
-                        "customer" : self.user ? self.user : null,
-                        "columns" : self.dynamicColumns ? self.dynamicColumns : null,
-                        "options" : self.options ? self.options : null,
-                        "unique_token": self.uuid
-                    }, "*");
-                    self.disableImportButton = false;
-                    self.onReady();
-                    if(self.openModalOnIframeLoad) {
-                        self.openModal();
+                iframe.onload = () => {
+                    this.isIframeLoaded = true;
+                    this.logger.info("Importer ready");
+                    iframe.contentWindow.postMessage(buildInitPayload(this.user, this.dynamicColumns, this.options, this.uuid), "*");
+                    this.disableImportButton = false;
+                    this.onReady();
+                    if (this.lifecycle.markReady()) {
+                        this.openModal();
                     }
-                }
+                };
 
                 this.$refs.holder.appendChild(iframe);
-
             }
         },
+        created() {
+            // Plain properties, not data(): they hold no template state and must not be made reactive.
+            this.messageGate = createMessageGate();
+            this.importTracker = createImportTracker();
+            this.registryEntry = { getHolder: () => this.$refs.holder };
+            this.fileSender = createFileSender({
+              getIframe: () => this.iframe,
+              getToken: () => this.uuid,
+              getTargetOrigin: () => this.targetOrigin,
+              getBaseDomain: () => this.baseDomain,
+              takeFile: () => {
+                const file = this.pendingFile;
+                this.pendingFile = null;
+                return file;
+              },
+              onSent: () => this.startFileAckTimer()
+            });
+        },
         mounted() {
+            this.syncBlocked();
+            this.unsubscribeOpenImporters = subscribeOpenImporters(() => this.syncBlocked());
             if(this.lazy) {
                 this.disableImportButton = false;
             } else {
                 this.initImporter();
             }
-            
         },
         beforeDestroy() {
             this.logger.verbose("Removing message event listener");
             window.removeEventListener("message", this.onMessageEvent);
+            this.destroyImporter();
+            if (this.unsubscribeOpenImporters) {
+                this.unsubscribeOpenImporters();
+                this.unsubscribeOpenImporters = null;
+            }
         }
     }
 </script>

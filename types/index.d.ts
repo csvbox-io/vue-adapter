@@ -30,20 +30,20 @@ declare module '@csvbox/vuejs' {
       options?: CSVBoxOptions;
       dataLocation?: string;
       customDomain?: string;
+      debug?: string;
       language?: string;
       lazy?: boolean;
       loadStarted?: () => void;
       environment?: CSVBoxEnvironment | null;
+      theme?: string;
     }
-    
+
     export interface CSVBoxButtonMethods {
       openModal(): void;
       /** Open the importer on a File the host page already has, instead of the file picker. */
       openModalWithFile(file: File): void;
     }
-    
-    const CSVBoxButton: DefineComponent<CSVBoxButtonProps, {}, {}, {}, CSVBoxButtonMethods>;
-    
-    export default CSVBoxButton;
-    
+
+    export const CSVBoxButton: DefineComponent<CSVBoxButtonProps, {}, {}, {}, CSVBoxButtonMethods>;
+
 }
