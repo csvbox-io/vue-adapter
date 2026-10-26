@@ -3,7 +3,7 @@
         <button :disabled="disableImportButton || blockedByOther" @click.prevent="openModal">
             <slot></slot>
         </button>
-        <div ref="holder" class="holder-style"></div>
+        <div ref="holder" class="holder-style" :style="holderStyle"></div>
     </div>
 </template>
 <script>
@@ -12,6 +12,8 @@
     import { Logger } from "../utils/Logger";
 
     import {
+        HOLDER_STYLE,
+        IFRAME_STYLE,
         buildImportUrl,
         generateUuid,
         buildInitPayload,
@@ -106,6 +108,12 @@
             },
         },
         computed: {
+            // The holder is a fixed, full-screen layer that stays hidden until the importer opens. The style is
+            // set here instead of in a <style> block: a block injects CSS into the document as soon as the
+            // package is imported, which fails on a server that has no document.
+            holderStyle() {
+                return { ...HOLDER_STYLE };
+            },
             // Default place to send the file. A file is only ever sent to a named origin, never "*".
             targetOrigin() {
                 return new URL(this.iframeSrc).origin;
@@ -150,6 +158,7 @@
                 // while this importer is still loading, and so it is stacked above any importer
                 // opened earlier.
                 registerOpenImporter(this.registryEntry);
+                this.closeReported = false;
                 if(!this.iframe) {
                     this.lifecycle.requestOpen();
                     this.initImporter();
@@ -188,6 +197,7 @@
                 if(this.lifecycle.requestOpen()) {
                     this.logger.verbose("Opening importer modal");
                     this.isModalShown = true;
+                    this.closeReported = false;
                     // Explicit: a previously declined file leaves the holder click-through.
                     this.$refs.holder.style.pointerEvents = 'auto';
                     this.$refs.holder.style.display = 'block';
@@ -342,6 +352,11 @@
                 this.finishImport(ended);
             },
             handleModalClosed() {
+                // A repeated close message must not call onClose a second time. The flag is cleared when the importer is opened again.
+                if (this.closeReported) {
+                    return;
+                }
+                this.closeReported = true;
                 if (this.importTracker.isInFlight()) {
                     // Closed after submitting and before the result arrived: keep the iframe and its
                     // listener so the late result still reaches onImport. It is removed once that
@@ -391,6 +406,7 @@
                 this.uuid = generateUuid();
                 this.messageGate.reset();
                 this.importTracker.reset();
+                this.closeReported = false;
                 this.loadStarted();
                 this.logger.info("Framework:", "Vue");
                 this.logger.info("Library version:", version);
@@ -408,6 +424,7 @@
                 iframe.setAttribute("allow", "clipboard-read; clipboard-write *");
                 iframe.frameBorder = 0;
                 iframe.classList.add('csvbox-iframe');
+                Object.assign(iframe.style, IFRAME_STYLE);
 
                 window.addEventListener("message", this.onMessageEvent, false);
 
@@ -428,6 +445,7 @@
         created() {
             // Plain properties, not data(): they hold no template state and must not be made reactive.
             this.messageGate = createMessageGate();
+            this.closeReported = false;
             this.importTracker = createImportTracker();
             this.registryEntry = { getHolder: () => this.$refs.holder };
             this.fileSender = createFileSender({
@@ -463,23 +481,3 @@
         }
     }
 </script>
-<style scoped>
-    .holder-style {
-        display: none;
-        z-index: 2147483647;
-        position: fixed;
-        top: 0;
-        bottom: 0;
-        left: 0;
-        right: 0;
-    }
-</style>
-<style>
-.csvbox-iframe {
-    height: 100%;
-    width: 100%;
-    position: absolute;
-    top: 0;
-    left: 0;
-}
-</style>

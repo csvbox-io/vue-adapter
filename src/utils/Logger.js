@@ -14,8 +14,13 @@ export const TYPE = {
 export class Logger {
 
     constructor(level) {
-        if(sessionStorage && sessionStorage.getItem('CSVBOX_DEBUG_LEVEL')) {
-            level = sessionStorage.getItem('CSVBOX_DEBUG_LEVEL');
+        // Not available on a server, and some browsers refuse access (private mode, blocked site data).
+        try {
+            if(typeof sessionStorage !== 'undefined' && sessionStorage.getItem('CSVBOX_DEBUG_LEVEL')) {
+                level = sessionStorage.getItem('CSVBOX_DEBUG_LEVEL');
+            }
+        } catch (e) {
+            // keep the level that was passed in
         }
         if(TYPE[level]) {
             this.debugLevelPriority = TYPE[level].priority;
