@@ -11,66 +11,21 @@
     import { version } from "../../package.json";
     import { Logger } from "../utils/Logger";
 
-    // Page-wide record of the importers that are open or opening, shared by every CSVBox adapter
-    // on the page (it lives on window so separate copies of an adapter see the same list). It does
-    // two things: the newest importer is stacked on top (every holder is fixed, full screen and
-    // z-index 2147483647, so equal z-indexes would leave the one that comes first in the DOM on
-    // top), and the other instances learn that an importer is open so they can disable their button.
-    const OPEN_IMPORTERS_KEY = '__csvboxOpenImporters';
-    const TOP_Z_INDEX = 2147483647;
-
-    function openImporters() {
-        if (!window[OPEN_IMPORTERS_KEY]) window[OPEN_IMPORTERS_KEY] = { open: [], listeners: [] };
-        return window[OPEN_IMPORTERS_KEY];
-    }
-
-    function restackOpenImporters(reg) {
-        reg.open.forEach(function (entry, i) {
-            const holder = entry.getHolder();
-            if (holder) holder.style.zIndex = String(TOP_Z_INDEX - (reg.open.length - 1 - i));
-        });
-    }
-
-    function registerOpenImporter(entry) {
-        const reg = openImporters();
-        if (reg.open.indexOf(entry) >= 0) return;
-        reg.open.push(entry);
-        restackOpenImporters(reg);
-        reg.listeners.slice().forEach(function (fn) { fn(); });
-    }
-
-    function unregisterOpenImporter(entry) {
-        const reg = openImporters();
-        const i = reg.open.indexOf(entry);
-        if (i < 0) return;
-        reg.open.splice(i, 1);
-        restackOpenImporters(reg);
-        reg.listeners.slice().forEach(function (fn) { fn(); });
-    }
-
-    function isBlockedByOpenImporter(entry) {
-        const reg = openImporters();
-        return reg.open.length > 0 && reg.open.indexOf(entry) < 0;
-    }
-
-    function subscribeOpenImporters(fn) {
-        const reg = openImporters();
-        reg.listeners.push(fn);
-        return function () {
-            const i = reg.listeners.indexOf(fn);
-            if (i >= 0) reg.listeners.splice(i, 1);
-        };
-    }
-
     import {
         buildImportUrl,
         generateUuid,
         buildInitPayload,
         createModalLifecycle,
+        createMessageGate,
+        createImportTracker,
         createFileSender,
         classifyStructuredMessage,
-        classifyLegacyMessage
-    } from "@csvbox/adapter";
+        classifyLegacyMessage,
+        registerOpenImporter,
+        unregisterOpenImporter,
+        isBlockedByOpenImporter,
+        subscribeOpenImporters
+    } from '@csvbox/adapter';
 
     export default {
         name: 'csvbox-button',
@@ -310,6 +265,11 @@
                     if (!this.iframe || event.source !== this.iframe.contentWindow) {
                         return;
                     }
+                    // A newer importer sends the typed message as well; act on that one only.
+                    if (!this.messageGate.allowLegacy()) {
+                        return;
+                    }
+                    let ended = this.importTracker.observe(legacy);
                     if (legacy.type === "mainModalHidden") {
                         this.handleModalClosed();
                     }
@@ -319,20 +279,19 @@
                     if (legacy.type === "uploadFailed") {
                         this.onImport(false);
                     }
+                    this.finishImport(ended);
                     return;
                 }
 
-                // Set-file handshake messages. The shared core does not classify these, so they are
-                // read here, behind the same unique_token check the core applies.
-                let raw = event.data;
-                if (raw && typeof raw === "object" && raw.data && raw.data.unique_token == this.uuid) {
-                    this.fileSender.learnOrigin(event);
-
-                    if (raw.type === "csvbox-set-file-rejected" && raw.data.reason === "not-a-file") {
+                // File handshake messages (what openModalWithFile waits for). handleMessage also learns the
+                // importer's origin from any message that carries this instance's token.
+                const fileMessage = this.fileSender.handleMessage(event);
+                if (fileMessage) {
+                    if (fileMessage.type === "probe-reply") {
                         // Reply to our probe (it has no file). It only tells us the origin, so do nothing.
                         return;
                     }
-                    if (raw.type === "csvbox-modal-shown") {
+                    if (fileMessage.type === "modal-shown") {
                         this.clearFileAckTimer();
                         registerOpenImporter(this.registryEntry);
                         // What the file path in openModal() is waiting for. display as well as
@@ -344,7 +303,7 @@
                         this.$refs.holder.style.pointerEvents = 'auto';
                         return;
                     }
-                    if (raw.type === "csvbox-set-file-rejected") {
+                    if (fileMessage.type === "rejected") {
                         this.clearFileAckTimer();
                         // The importer has the file and will not take it. Put the holder away only if
                         // the modal was never confirmed up: a file declined while it is open leaves
@@ -355,7 +314,7 @@
                             this.$refs.holder.style.pointerEvents = 'auto';
                             unregisterOpenImporter(this.registryEntry);
                         }
-                        console.warn("[csvbox] importer declined the supplied file: " + raw.data.reason);
+                        console.warn("[csvbox] importer declined the supplied file: " + fileMessage.reason);
                         return;
                     }
                 }
@@ -365,6 +324,8 @@
                     return;
                 }
 
+                this.messageGate.markTyped();
+                let ended = this.importTracker.observe(message);
                 this.logger.verbose("Event:", `'${message.type}'`, event.data.data);
 
                 if (message.type === "data-on-submit") {
@@ -378,27 +339,58 @@
                 } else if (message.type === "csvbox-upload-failed") {
                     this.onImport(false);
                 }
+                this.finishImport(ended);
             },
             handleModalClosed() {
+                if (this.importTracker.isInFlight()) {
+                    // Closed after submitting and before the result arrived: keep the iframe and its
+                    // listener so the late result still reaches onImport. It is removed once that
+                    // result has been delivered (see finishImport), so the next open is a fresh load.
+                    if (this.$refs.holder) {
+                        this.$refs.holder.style.display = 'none';
+                        this.$refs.holder.style.pointerEvents = 'auto';
+                    }
+                    this.lifecycle.markHidden();
+                    this.isModalShown = false;
+                    this.clearFileAckTimer();
+                    unregisterOpenImporter(this.registryEntry);
+                    this.onClose();
+                    return;
+                }
+                this.destroyImporter();
+                this.onClose();
+            },
+            // Called after the result of an import has been delivered. If the modal was closed in the
+            // meantime the iframe was only hidden, so remove it now.
+            finishImport(ended) {
+                if (ended && !this.isModalShown && this.iframe) {
+                    this.destroyImporter();
+                }
+            },
+            // Puts the importer away: the next open builds a new iframe with a new token.
+            destroyImporter() {
                 if (this.$refs.holder) {
                     this.$refs.holder.style.display = 'none';
                     this.$refs.holder.style.pointerEvents = 'auto';
                     this.$refs.holder.innerHTML = '';
                 }
                 this.lifecycle.markClosed();
+                this.messageGate.reset();
+                this.importTracker.reset();
                 // A new iframe is built on the next open, so the origin is learned again.
                 this.clearProbeTimer();
                 this.isModalShown = false;
                 this.isIframeLoaded = false;
                 this.iframe = null;
                 unregisterOpenImporter(this.registryEntry);
-                this.onClose();
             },
             syncBlocked() {
                 this.blockedByOther = isBlockedByOpenImporter(this.registryEntry);
             },
             initImporter() {
                 this.uuid = generateUuid();
+                this.messageGate.reset();
+                this.importTracker.reset();
                 this.loadStarted();
                 this.logger.info("Framework:", "Vue");
                 this.logger.info("Library version:", version);
@@ -434,6 +426,9 @@
             }
         },
         created() {
+            // Plain properties, not data(): they hold no template state and must not be made reactive.
+            this.messageGate = createMessageGate();
+            this.importTracker = createImportTracker();
             this.registryEntry = { getHolder: () => this.$refs.holder };
             this.fileSender = createFileSender({
               getIframe: () => this.iframe,
@@ -460,8 +455,7 @@
         beforeDestroy() {
             this.logger.verbose("Removing message event listener");
             window.removeEventListener("message", this.onMessageEvent);
-            this.clearProbeTimer();
-            unregisterOpenImporter(this.registryEntry);
+            this.destroyImporter();
             if (this.unsubscribeOpenImporters) {
                 this.unsubscribeOpenImporters();
                 this.unsubscribeOpenImporters = null;
