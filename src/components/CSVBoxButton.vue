@@ -275,8 +275,8 @@
                     if (!this.iframe || event.source !== this.iframe.contentWindow) {
                         return;
                     }
-                    // A newer importer sends the typed message as well; act on that one only.
-                    if (!this.messageGate.allowLegacy()) {
+                    // A newer importer sends the typed twin of this message as well; act on that one only.
+                    if (!this.messageGate.allowLegacy(legacy.type)) {
                         return;
                     }
                     let ended = this.importTracker.observe(legacy);
@@ -335,7 +335,7 @@
                     return;
                 }
 
-                this.messageGate.markTyped();
+                this.messageGate.markTyped(message.type);
                 let ended = this.importTracker.observe(message);
                 this.finishImport(ended);
                 this.logger.verbose("Event:", `'${message.type}'`, event.data.data);
@@ -446,6 +446,11 @@
                     }
                 };
 
+                // The full-screen layer goes on <body>. Inside a parent with a CSS transform, filter or contain, `position: fixed`
+                // would fill that parent instead of the screen (a button inside an animated modal, for example).
+                if (this.$refs.holder.parentNode !== document.body) {
+                    document.body.appendChild(this.$refs.holder);
+                }
                 this.$refs.holder.appendChild(iframe);
             }
         },
@@ -481,6 +486,10 @@
             this.logger.verbose("Removing message event listener");
             window.removeEventListener("message", this.onMessageEvent);
             this.destroyImporter();
+            // It was moved to <body> when the importer started, so it is not removed together with the component.
+            if (this.$refs.holder && this.$refs.holder.parentNode === document.body) {
+                this.$refs.holder.remove();
+            }
             if (this.unsubscribeOpenImporters) {
                 this.unsubscribeOpenImporters();
                 this.unsubscribeOpenImporters = null;
